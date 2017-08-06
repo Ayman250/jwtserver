@@ -25,7 +25,7 @@ type Product struct {
 } 
 
 type LoginInfo struct {
-  UserName string
+  Username string
   Password string
 }
 /* We will create our catalog of VR experiences and store them in a slice. */
@@ -59,8 +59,6 @@ func main() {
   r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
 
   r.Handle("/login", LoginHandler).Methods("POST")
-
-  r.Handle("/get-token", GetTokenHandler).Methods("GET")
 
   // Our application will run on port 3000. Here we declare the port and pass in our router.
   log.Fatal(http.ListenAndServe(":3030",
@@ -109,7 +107,7 @@ var AddFeedbackHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Re
 })
 
 
-var GetTokenHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+func getToken() string{
     /* Create the token */
     token := jwt.New(jwt.SigningMethodHS256)
 
@@ -123,10 +121,9 @@ var GetTokenHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 
     /* Sign the token with our secret */
     tokenString, _ := token.SignedString(mySigningKey)
-
+    return tokenString
     /* Finally, write the token to the browser window */
-    w.Write([]byte(tokenString))
-})
+}
 
 var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
   ValidationKeyGetter: func(token *jwt.Token) (interface{}, error) {
@@ -137,12 +134,13 @@ var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
 })
 
 var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
-  r.ParseForm()
-  fmt.Println("Username:", r.Form["username"])
-  fmt.Println("Password:", r.Form["password"])
-  if r.FormValue("username") == "admin" && r.FormValue("password") == "pasword"{
-    w.Write([]byte("SUCCESS"))
+  dec := json.NewDecoder(r.Body)
+  var loginInfo LoginInfo
+  dec.Decode(&loginInfo)
+  fmt.Println(loginInfo)
+  if loginInfo.Username == "Ad" && loginInfo.Password == "pas" {
+    w.Write([]byte(getToken()))
   } else {
-    w.Write([]byte("WRONG USERNAME OR PASSWORD"))
+    w.WriteHeader(http.StatusBadRequest)
   }
 })
