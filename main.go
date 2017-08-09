@@ -58,6 +58,8 @@ func main() {
 	/* We will add the middleware to our products and feedback routes. The status route will be publicly accessible */
 	r.Handle("/products", jwtMiddleware.Handler(ProductsHandler)).Methods("GET")
 	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
+  r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
+  r.Handle("/tester", jwtMiddleware.Handler(Test)).Methods("GET")
 
 	r.Handle("/login", LoginHandler).Methods("POST")
 
@@ -65,7 +67,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":3030",
 		handlers.LoggingHandler(os.Stdout, handlers.CORS(
 			handlers.AllowedOrigins([]string{"http://localhost:3000"}),
-			handlers.AllowedHeaders([]string{"*"}))(r))))
+			handlers.AllowedHeaders([]string{"Authorization"}))(r))))
 
 }
 
@@ -117,7 +119,7 @@ func getToken() string {
 	/* Set token claims */
 	claims["admin"] = true
 	claims["name"] = "Ado Kukic"
-	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
+	claims["exp"] = time.Now().Add(time.Second * 60).Unix()
 
 	/* Sign the token with our secret */
 	tokenString, _ := token.SignedString(mySigningKey)
@@ -143,4 +145,8 @@ var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 	}
+})
+
+var Test = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  w.Write([]byte("AUTHORIZED!!"))
 })
