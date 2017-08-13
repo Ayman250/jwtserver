@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	// "github.com/auth0-community/auth0"
+	// "github.com/auth0-comcdmunity/auth0"
 	"github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/handlers"
@@ -56,6 +56,7 @@ func main() {
 	// /products/{slug}/feedback - which will capture user feedback on products
 	r.Handle("/status", StatusHandler).Methods("GET")
 	/* We will add the middleware to our products and feedback routes. The status route will be publicly accessible */
+  r.Handle("/userstatus", jwtMiddleware.Handler(UserStatus)).Methods("GET")
 	r.Handle("/products", jwtMiddleware.Handler(ProductsHandler)).Methods("GET")
 	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
   r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
@@ -149,4 +150,8 @@ var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request)
 
 var Test = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   w.Write([]byte("AUTHORIZED!!"))
+})
+
+var UserStatus = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  w.WriteHeader(http.StatusOK)
 })
