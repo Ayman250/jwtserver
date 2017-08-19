@@ -14,6 +14,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+  "golang.org/x/crypto/bcrypt"
 	// jose "gopkg.in/square/go-jose.v2"
 )
 
@@ -61,7 +62,8 @@ func main() {
 	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
   r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
   r.Handle("/tester", jwtMiddleware.Handler(Test)).Methods("GET")
-
+  
+  r.Handle("/register", RegisterHandler).Methods("Post")
 	r.Handle("/login", LoginHandler).Methods("POST")
 
 	// Our application will run on port 3000. Here we declare the port and pass in our router.
@@ -146,6 +148,19 @@ var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 	}
+})
+
+var RegisterHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  dec := json.NewDecoder(r.Body)
+  var loginInfo LoginInfo
+  var hashedLoginInfo LoginInfo
+  dec.Decode(&loginInfo)
+  fmt.Println(loginInfo)
+  hashedLoginInfo.Username = loginInfo.Username
+  hash, _ :=  bcrypt.GenerateFromPassword([]byte(loginInfo.Password), 14)
+  hashedLoginInfo.Password = string(hash)
+  fmt.Println(hashedLoginInfo)
+
 })
 
 var Test = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
