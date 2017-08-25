@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
   "golang.org/x/crypto/bcrypt"
+  rdb "github.com/dancannon/gorethink"
 	// jose "gopkg.in/square/go-jose.v2"
 )
 
@@ -26,8 +27,16 @@ type Product struct {
 }
 
 type LoginInfo struct {
-	Username string
-	Password string
+	Username string `json:"username" gorethink:"id"`
+	Password string `json:"password" gorethink:"password"`
+}
+
+type Post struct {
+  Id        string    `json:"id"`
+  Hash      string    `json:"hash"`    
+  Body      string    `json:"body"`    
+  Author    string    `json:"author"`    
+  CreatedAt time.Time `json:"createdAt"` 
 }
 
 /* We will create our catalog of VR experiences and store them in a slice. */
@@ -59,10 +68,12 @@ func main() {
 	/* We will add the middleware to our products and feedback routes. The status route will be publicly accessible */
   r.Handle("/userstatus", jwtMiddleware.Handler(UserStatus)).Methods("GET")
 	r.Handle("/products", jwtMiddleware.Handler(ProductsHandler)).Methods("GET")
-	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
   r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
   r.Handle("/tester", jwtMiddleware.Handler(Test)).Methods("GET")
   
+  r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
+  r.Handle("/addpost", jwtMiddleware.Handler(AddPost)).Methods("POST")
+
   r.Handle("/register", RegisterHandler).Methods("Post")
 	r.Handle("/login", LoginHandler).Methods("POST")
 
@@ -72,6 +83,19 @@ func main() {
 			handlers.AllowedOrigins([]string{"http://localhost:3000"}),
 			handlers.AllowedHeaders([]string{"Authorization"}))(r))))
 
+}
+
+func getDBSession() *rdb.Session{
+  session, err := rdb.Connect(rdb.ConnectOpts{
+    Address: "localhost:28015",
+    Database: "hashapp",
+  })
+
+  if err != nil {
+    log.Panic(err.Error())
+  }
+
+  return session
 }
 
 var StatusHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +146,7 @@ func getToken() string {
 	/* Set token claims */
 	claims["admin"] = true
 	claims["name"] = "Ado Kukic"
-	claims["exp"] = time.Now().Add(time.Second * 60).Unix()
+	claims["exp"] = time.Now().Add(time.Minute * 60).Unix()
 
 	/* Sign the token with our secret */
 	tokenString, _ := token.SignedString(mySigningKey)
@@ -138,14 +162,51 @@ var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
 	SigningMethod: jwt.SigningMethodHS256,
 })
 
+var AddPost = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  fmt.Println("WE'RE IN AddPost ENDPOINT")
+  var post Post
+  dec := json.NewDecoder(r.Body)
+  err := dec.Decode(&post)
+  if err != nil {
+    fmt.Println(err)
+    return
+  }
+  post.CreatedAt = time.Now()
+  fmt.Println(post)
+
+})
+
+//hashes string and returns hashed value
+func hash(val string) string {
+  hash, err :=  bcrypt.GenerateFromPassword([]byte(val), 14)
+  if err != nil {
+    fmt.Print(err)
+    return "FIX THIS SHIT LATER"
+  }
+  return string(hash)
+}
+
+
 var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	var loginInfo LoginInfo
+  var hashedLoginInfo LoginInfo
 	dec.Decode(&loginInfo)
 	fmt.Println(loginInfo)
-	if loginInfo.Username == "Ad" && loginInfo.Password == "pas" {
+  dbSession := getDBSession()
+  res, err := rdb.Table("users").Get(loginInfo.Username).Run(dbSession)
+  if err != nil {
+    fmt.Print(err)
+    w.WriteHeader(http.StatusBadRequest)
+    return
+  }
+  res.Next(&hashedLoginInfo)
+  fmt.Println(hashedLoginInfo)
+  err = bcrypt.CompareHashAndPassword([]byte(hashedLoginInfo.Password), []byte(loginInfo.Password))
+	if err == nil {
 		w.Write([]byte(getToken()))
 	} else {
+    fmt.Println(err)
 		w.WriteHeader(http.StatusBadRequest)
 	}
 })
@@ -157,8 +218,15 @@ var RegisterHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
   dec.Decode(&loginInfo)
   fmt.Println(loginInfo)
   hashedLoginInfo.Username = loginInfo.Username
-  hash, _ :=  bcrypt.GenerateFromPassword([]byte(loginInfo.Password), 14)
-  hashedLoginInfo.Password = string(hash)
+  hashedLoginInfo.Password = hash(loginInfo.Password)
+  dbSession := getDBSession()
+  err := rdb.Table("users").Insert(hashedLoginInfo).Exec(dbSession)
+  if err != nil {
+  	fmt.Println(err)
+    w.WriteHeader(http.StatusBadRequest)
+  } else {
+  	w.Write([]byte(getToken()))
+  }
   fmt.Println(hashedLoginInfo)
 
 })
