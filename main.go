@@ -32,11 +32,16 @@ type LoginInfo struct {
 }
 
 type Post struct {
-  Id        string    `json:"id"`
-  Hash      string    `json:"hash"`    
-  Body      string    `json:"body"`    
-  Author    string    `json:"author"`    
-  CreatedAt time.Time `json:"createdAt"` 
+	Id        string    `json:"id" gorethink:"id" omitempty`
+	Hash      string    `json:"hash" gorethink:"hash"`    
+	Body      string    `json:"body" gorethink:"body"`    
+	Author    string    `json:"author" gorethink:"author"`    
+	CreatedAt time.Time `json:"createdAt" gorethink:"createdAt"` 
+}
+
+type PostRequest struct {
+	Hash string `json:"hash" gorethink:"hash"`
+	RequestTime `json:"requestTime" gorethink:"requestTime"`  
 }
 
 /* We will create our catalog of VR experiences and store them in a slice. */
@@ -66,22 +71,22 @@ func main() {
 	// /products/{slug}/feedback - which will capture user feedback on products
 	r.Handle("/status", StatusHandler).Methods("GET")
 	/* We will add the middleware to our products and feedback routes. The status route will be publicly accessible */
-  r.Handle("/userstatus", jwtMiddleware.Handler(UserStatus)).Methods("GET")
+	r.Handle("/userstatus", jwtMiddleware.Handler(UserStatus)).Methods("GET")
 	r.Handle("/products", jwtMiddleware.Handler(ProductsHandler)).Methods("GET")
-  r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
-  r.Handle("/tester", jwtMiddleware.Handler(Test)).Methods("GET")
-  
-  r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
-  r.Handle("/addpost", jwtMiddleware.Handler(AddPost)).Methods("POST")
+	r.Handle("/test", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("GET")
+	r.Handle("/tester", jwtMiddleware.Handler(Test)).Methods("GET")
 
-  r.Handle("/register", RegisterHandler).Methods("Post")
+	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
+	r.Handle("/addpost", jwtMiddleware.Handler(AddPost)).Methods("POST")
+
+	r.Handle("/register", RegisterHandler).Methods("Post")
 	r.Handle("/login", LoginHandler).Methods("POST")
 
 	// Our application will run on port 3000. Here we declare the port and pass in our router.
 	log.Fatal(http.ListenAndServe(":3030",
 		handlers.LoggingHandler(os.Stdout, handlers.CORS(
-			handlers.AllowedOrigins([]string{"http://localhost:3000"}),
-			handlers.AllowedHeaders([]string{"Authorization"}))(r))))
+		handlers.AllowedOrigins([]string{"http://localhost:3000"}),
+		handlers.AllowedHeaders([]string{"Authorization"}))(r))))
 
 }
 
@@ -163,7 +168,7 @@ var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
 })
 
 var AddPost = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-  fmt.Println("WE'RE IN AddPost ENDPOINT")
+  dbSession := getDBSession()
   var post Post
   dec := json.NewDecoder(r.Body)
   err := dec.Decode(&post)
@@ -173,6 +178,11 @@ var AddPost = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   }
   post.CreatedAt = time.Now()
   fmt.Println(post)
+  err = rdb.Table("posts").Insert(post).Exec(dbSession)
+  if err!=nil{
+  	fmt.Println(err)
+  	w.WriteHeader(http.StatusInternalServerError)
+  }
 
 })
 
@@ -197,7 +207,7 @@ var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request)
   res, err := rdb.Table("users").Get(loginInfo.Username).Run(dbSession)
   if err != nil {
     fmt.Print(err)
-    w.WriteHeader(http.StatusBadRequest)
+    w.WriteHeader(http.StatusInternalServerError)
     return
   }
   res.Next(&hashedLoginInfo)
@@ -207,7 +217,7 @@ var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request)
 		w.Write([]byte(getToken()))
 	} else {
     fmt.Println(err)
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 })
 
@@ -220,15 +230,25 @@ var RegisterHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
   hashedLoginInfo.Username = loginInfo.Username
   hashedLoginInfo.Password = hash(loginInfo.Password)
   dbSession := getDBSession()
-  err := rdb.Table("users").Insert(hashedLoginInfo).Exec(dbSession)
-  if err != nil {
-  	fmt.Println(err)
-    w.WriteHeader(http.StatusBadRequest)
-  } else {
-  	w.Write([]byte(getToken()))
-  }
-  fmt.Println(hashedLoginInfo)
+  /*Check if user already exists */
+  res, getErr := rdb.Table("users").Get(loginInfo.Username).Run(dbSession)
+  if getErr != nil {
+  	w.WriteHeader(http.StatusInternalServerError)
+  	fmt.Println(getErr)
 
+  } else if res.IsNil() {
+	  insertErr := rdb.Table("users").Insert(hashedLoginInfo).Exec(dbSession)
+	  if insertErr != nil {
+	  	fmt.Println(insertErr)
+	    w.WriteHeader(http.StatusInternalServerError)
+	  } else {
+	  	w.Write([]byte(getToken()))
+	  }
+  } else {
+  	w.WriteHeader(http.StatusBadRequest)
+  }
+  
+  fmt.Println(hashedLoginInfo)
 })
 
 var Test = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,4 +257,10 @@ var Test = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 var UserStatus = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   w.WriteHeader(http.StatusOK)
+})
+
+var GetPosts = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var postRequest PostRequest
+	dec := json.NewDecoder(r.Body)
+	dec.Decode(&postRequest)
 })
