@@ -32,16 +32,11 @@ type LoginInfo struct {
 }
 
 type Post struct {
-	Id        string    `json:"id" gorethink:"id" omitempty`
+	Id        string    `json:"id" gorethink:"id,omitempty"`
 	Hash      string    `json:"hash" gorethink:"hash"`    
 	Body      string    `json:"body" gorethink:"body"`    
 	Author    string    `json:"author" gorethink:"author"`    
 	CreatedAt time.Time `json:"createdAt" gorethink:"createdAt"` 
-}
-
-type PostRequest struct {
-	Hash string `json:"hash" gorethink:"hash"`
-	RequestTime `json:"requestTime" gorethink:"requestTime"`  
 }
 
 /* We will create our catalog of VR experiences and store them in a slice. */
@@ -78,6 +73,7 @@ func main() {
 
 	r.Handle("/products/{slug}/feedback", jwtMiddleware.Handler(AddFeedbackHandler)).Methods("POST")
 	r.Handle("/addpost", jwtMiddleware.Handler(AddPost)).Methods("POST")
+	r.Handle("/getposts", jwtMiddleware.Handler(GetPosts)).Methods("GET")
 
 	r.Handle("/register", RegisterHandler).Methods("Post")
 	r.Handle("/login", LoginHandler).Methods("POST")
@@ -141,7 +137,7 @@ var AddFeedbackHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Re
 	}
 })
 
-func getToken() string {
+func getToken(username string) string {
 	/* Create the token */
 	token := jwt.New(jwt.SigningMethodHS256)
 
@@ -149,8 +145,7 @@ func getToken() string {
 	claims := token.Claims.(jwt.MapClaims)
 
 	/* Set token claims */
-	claims["admin"] = true
-	claims["name"] = "Ado Kukic"
+	claims["username"] = username
 	claims["exp"] = time.Now().Add(time.Minute * 60).Unix()
 
 	/* Sign the token with our secret */
@@ -168,21 +163,28 @@ var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
 })
 
 var AddPost = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-  dbSession := getDBSession()
-  var post Post
-  dec := json.NewDecoder(r.Body)
-  err := dec.Decode(&post)
-  if err != nil {
-    fmt.Println(err)
-    return
-  }
-  post.CreatedAt = time.Now()
-  fmt.Println(post)
-  err = rdb.Table("posts").Insert(post).Exec(dbSession)
-  if err!=nil{
-  	fmt.Println(err)
-  	w.WriteHeader(http.StatusInternalServerError)
-  }
+	var post Post
+	dec := json.NewDecoder(r.Body)
+	err := dec.Decode(&post)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	claims, extractClaimsSucess := extractClaims(r)
+	if(!extractClaimsSucess) {
+		fmt.Println("error parsing claim")
+		return
+	}
+	tokenUsername := claims["username"].(string)
+	post.Author = tokenUsername 
+	post.CreatedAt = time.Now()
+	fmt.Println(post)
+	dbSession := getDBSession()
+	err = rdb.Table("posts").Insert(post).Exec(dbSession)
+	if err!=nil{
+		fmt.Println(err)
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 
 })
 
@@ -200,23 +202,23 @@ func hash(val string) string {
 var LoginHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	var loginInfo LoginInfo
-  var hashedLoginInfo LoginInfo
+	var hashedLoginInfo LoginInfo
 	dec.Decode(&loginInfo)
 	fmt.Println(loginInfo)
-  dbSession := getDBSession()
-  res, err := rdb.Table("users").Get(loginInfo.Username).Run(dbSession)
-  if err != nil {
-    fmt.Print(err)
-    w.WriteHeader(http.StatusInternalServerError)
-    return
-  }
-  res.Next(&hashedLoginInfo)
-  fmt.Println(hashedLoginInfo)
-  err = bcrypt.CompareHashAndPassword([]byte(hashedLoginInfo.Password), []byte(loginInfo.Password))
+	dbSession := getDBSession()
+	res, err := rdb.Table("users").Get(loginInfo.Username).Run(dbSession)
+	if err != nil {
+		fmt.Print(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	res.Next(&hashedLoginInfo)
+	fmt.Println(hashedLoginInfo)
+	err = bcrypt.CompareHashAndPassword([]byte(hashedLoginInfo.Password), []byte(loginInfo.Password))
 	if err == nil {
-		w.Write([]byte(getToken()))
+		w.Write([]byte(getToken(loginInfo.Username)))
 	} else {
-    fmt.Println(err)
+		fmt.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 })
@@ -242,7 +244,7 @@ var RegisterHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Reque
 	  	fmt.Println(insertErr)
 	    w.WriteHeader(http.StatusInternalServerError)
 	  } else {
-	  	w.Write([]byte(getToken()))
+	  	w.Write([]byte(getToken(loginInfo.Username)))
 	  }
   } else {
   	w.WriteHeader(http.StatusBadRequest)
@@ -259,8 +261,52 @@ var UserStatus = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   w.WriteHeader(http.StatusOK)
 })
 
+func extractClaims(r *http.Request) (jwt.MapClaims, bool) {
+	tokenStr := r.Header["Authorization"][0][7:]
+    hmacSecretString := "secret"
+    hmacSecret := []byte(hmacSecretString)
+    token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+         // check token signing method etc
+         return hmacSecret, nil
+    })
+
+    if err != nil {
+    	fmt.Println(err)
+        return nil, false
+    }
+
+    if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    	fmt.Println("Valid JWT Token")
+        return claims, true
+    } else 
+{        log.Printf("Invalid JWT Token")
+        return nil, false
+    }
+}
+
 var GetPosts = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	var postRequest PostRequest
-	dec := json.NewDecoder(r.Body)
-	dec.Decode(&postRequest)
+	hash := r.URL.Query().Get("hash")
+	var post Post
+	var posts []Post
+	// enc := json.NewEncoder()
+	dbSession := getDBSession()
+	res, getErr := rdb.Table("posts").GetAllByIndex("hash", hash).Run(dbSession)
+	if getErr != nil {
+			fmt.Println(getErr)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+	}
+	for (!res.IsNil()) {
+		res.Next(&post)
+		posts = append(posts, post)
+	}
+	fmt.Println(posts)
+	postsJSON, err := json.Marshal(posts)
+	if err != nil {
+			fmt.Println(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+	}
+	w.Write([]byte(postsJSON))
+	w.WriteHeader(http.StatusOK)
 })
